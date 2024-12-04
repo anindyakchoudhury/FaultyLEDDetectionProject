@@ -1,5 +1,4 @@
-%only masking is working partially
-
+clc; close all; clearvars;
 % Read the reference and test images
 ref_img = imread('reference.jpg');  % Your first image with complete pattern
 test_img = imread('test.jpg');      % Your second image with missing LEDs
@@ -16,7 +15,7 @@ test_saturation = test_hsv(:,:,2);
 
 % Parameters for LED detection
 %intensity_threshold = 0.7;  % Adjust based on your LED brightness
-intensity_threshold = 0.8;  % Adjust based on your LED brightness
+intensity_threshold = 0.7;  % Adjust based on your LED brightness
 %saturation_threshold = 0.5; % Adjust based on LED color saturation
 saturation_threshold = 0.5; % Adjust based on LED color saturation
 min_blob_size = 20;        % Minimum size of LED blob in pixels
@@ -47,8 +46,8 @@ ref_leds = struct('row', {}, 'col', {}, 'centroid', {}, 'intensity', {});
 test_leds = struct('row', {}, 'col', {}, 'centroid', {}, 'intensity', {});
 
 % LED grid parameters
-grid_rows = 8;
-grid_cols = 32;
+grid_rows = 4;
+grid_cols = 16;
 img_height = size(ref_img, 1);
 img_width = size(ref_img, 2);
 
@@ -74,7 +73,32 @@ for i = 1:length(test_valid_idx)
 end
 
 % Find missing LEDs
+% missing_leds = [];
+% for i = 1:length(ref_leds)
+%     ref_led = ref_leds(i);
+%     found = false;
+
+%     for j = 1:length(test_leds)
+%         test_led = test_leds(j);
+%         if ref_led.row == test_led.row && ref_led.col == test_led.col
+%             % Compare intensity and spectral characteristics
+%             intensity_diff = abs(ref_led.intensity - test_led.intensity);
+%             if intensity_diff < 0.2  % Threshold for intensity difference
+%                 found = true;
+%                 break;
+%             end
+%         end
+%     end
+
+%     if ~found
+%         missing_leds(end+1,:) = [ref_led.row, ref_led.col];
+%     end
+% end
+
+% Find missing LEDs
 missing_leds = [];
+seen_positions = containers.Map('KeyType', 'char', 'ValueType', 'logical');
+
 for i = 1:length(ref_leds)
     ref_led = ref_leds(i);
     found = false;
@@ -92,7 +116,14 @@ for i = 1:length(ref_leds)
     end
 
     if ~found
-        missing_leds(end+1,:) = [ref_led.row, ref_led.col];
+        % Create a unique key for this position
+        position_key = sprintf('%d_%d', ref_led.row, ref_led.col);
+
+        % Only add if we haven't seen this position before
+        if ~isKey(seen_positions, position_key)
+            missing_leds(end+1,:) = [ref_led.row, ref_led.col];
+            seen_positions(position_key) = true;
+        end
     end
 end
 
