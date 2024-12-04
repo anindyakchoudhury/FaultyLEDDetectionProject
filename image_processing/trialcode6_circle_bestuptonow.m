@@ -1,5 +1,5 @@
 clc; close all; clearvars;
-
+%akc
 % Read and prepare images (same as before)
 ref_img = imread('test2.jpg');
 test_img = imread('test6.jpg');
