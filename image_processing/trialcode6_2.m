@@ -15,11 +15,11 @@ test_saturation = test_hsv(:,:,2);
 
 % Parameters
 intensity_threshold = 0.7;
-saturation_threshold = 0.5;
+saturation_threshold = 0.2;
 
 % Create initial masks
-ref_mask = (ref_intensity > intensity_threshold) & (ref_saturation > saturation_threshold);
-test_mask = (test_intensity > intensity_threshold) & (test_saturation > saturation_threshold);
+ref_mask = (ref_intensity > intensity_threshold) & (ref_saturation < saturation_threshold);
+test_mask = (test_intensity > intensity_threshold) & (test_saturation < saturation_threshold);
 
 % Clean up masks using circular structuring element
 se = strel('disk', 2);
