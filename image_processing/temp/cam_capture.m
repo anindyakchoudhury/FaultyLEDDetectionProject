@@ -6,9 +6,9 @@ cam.Resolution='752x416';
 
 img = snapshot(cam);
 
-cropRect = [0, 145, 715, 195]; % x=50, y=50, width=200, height=150
+cropRect = [0, 145, 715, 195]; % x=0, y=, width=, height=
 croppedImg = imcrop(img, cropRect);
-imwrite(croppedImg, "cam_test.jpg");
+imwrite(croppedImg, "cam_reference.jpg");
 imshow(croppedImg)
 
 

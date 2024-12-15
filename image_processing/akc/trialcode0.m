@@ -4,8 +4,8 @@ clc; close all; clearvars;
 
 
 % Read and prepare images
-ref_img = imread('cam_reference.jpg');
-test_img = imread('cam_test.jpg');
+ref_img = imread("cam_reference1.jpg");
+test_img = imread("cam_test1.jpg");
 
 % Convert images to grayscale for feature detection
 ref_gray = rgb2gray(ref_img);
@@ -33,20 +33,24 @@ ref_hsv = rgb2hsv(ref_img);
 test_hsv = rgb2hsv(test_img);
 
 ref_intensity = ref_hsv(:, :, 3);
-ref_saturation = ref_hsv(:, :, 3);
+ref_saturation = ref_hsv(:, :, 2);
 test_intensity = test_hsv(:, :, 3);
-test_saturation = test_hsv(:, :, 3);
+test_saturation = test_hsv(:, :, 2);
 
-intensity_threshold = 0.9;
-saturation_threshold = 0.9 ;
+intensity_threshold = 0.8;
+saturation_threshold = 0.4;
 
 % Create initial masks
-ref_mask = (ref_intensity > intensity_threshold) & (ref_saturation > saturation_threshold);
-test_mask = (test_intensity > intensity_threshold) & (test_saturation > saturation_threshold);
+%ref_mask = (ref_intensity > intensity_threshold) & (ref_saturation > saturation_threshold);
+%test_mask = (test_intensity > intensity_threshold) & (test_saturation > saturation_threshold);
+ref_mask =  (ref_saturation < saturation_threshold);
+test_mask = (test_saturation < saturation_threshold);
 
 % Transform reference mask to align with test image
 output_view = imref2d(size(test_gray));
 aligned_ref_mask = imwarp(ref_mask, tform, 'OutputView', output_view);
+
+montage({test_mask, aligned_ref_mask})
 
 % Calculate grid parameters
 [ref_height, ref_width] = size(ref_mask);

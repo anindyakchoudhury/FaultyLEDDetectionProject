@@ -1,31 +1,32 @@
-clc; close all; clearvars;
-%akc
-% Read and prepare images (same as before)
-ref_img = imread('cam_reference.jpg');
-test_img = imread('cam_test.jpg');
+function initiate_image_processing(ref_img, cam)
+    %Caputure Test Image
+    img = snapshot(cam);
+    cropRect = [21, 330, 1250, 400]; % x, y, width, height
+    croppedImg = imcrop(img, cropRect);
 
-% Convert to HSV and create masks (same as before)
+    disp("Test Image Captured");
+    test_img = croppedImg;
+    imwrite(test_img,"test1.jpg");
+
+
+% Main Processing Code Starts From Here
 ref_hsv = rgb2hsv(ref_img);
 test_hsv = rgb2hsv(test_img);
 
-ref_hue = ref_hsv(:,:,1);
-test_hue = test_hsv(:,:,1);
 ref_intensity = ref_hsv(:,:,3);
 test_intensity = test_hsv(:,:,3);
 ref_saturation = ref_hsv(:,:,2);
 test_saturation = test_hsv(:,:,2);
 
 % Parameters
-hue_threshold_upper = 0.05;
-hue_threshold_lower = 0.95;
-intensity_threshold = 0.1;
-saturation_threshold = 0.1;
+intensity_threshold = 0.7;
+saturation_threshold = 0.2;
 
 % Create initial masks
-ref_mask = (ref_intensity > intensity_threshold) & (ref_saturation > saturation_threshold) & ((ref_hue > hue_threshold_lower) | (ref_hue < hue_threshold_upper));
-test_mask = (test_intensity > intensity_threshold) & (test_saturation > saturation_threshold) & ((test_hue > hue_threshold_lower) | (test_hue < hue_threshold_upper));
+ref_mask = (ref_intensity > intensity_threshold) & (ref_saturation < saturation_threshold);
+test_mask = (test_intensity > intensity_threshold) & (test_saturation < saturation_threshold);
 
-% Clean up masks using circular structuring element 
+% Clean up masks using circular structuring element
 se = strel('disk', 2);
 ref_mask = imopen(ref_mask, se);
 test_mask = imopen(test_mask, se);
@@ -42,7 +43,29 @@ ref_cell_width = floor(ref_width/grid_cols);
 test_cell_height = floor(test_height/grid_rows);
 test_cell_width = floor(test_width/grid_cols);
 
+% Function to analyze circular LED region
+function [ratio, center] = analyzeCircularLED(cell_mask)
+    % Find the center of the potential LED in the cell
+    [y, x] = find(cell_mask);
+    if isempty(y)
+        ratio = 0;
+        center = [0, 0];
+        return;
+    end
 
+    % Calculate center of mass
+    center_x = mean(x);
+    center_y = mean(y);
+
+    % Create circular mask for analysis
+    [XX, YY] = meshgrid(1:size(cell_mask,2), 1:size(cell_mask,1));
+    radius = min(size(cell_mask))/4;  % Adjust radius based on LED size
+    circular_region = ((XX-center_x).^2 + (YY-center_y).^2 <= radius^2);
+
+    % Calculate ratio only within circular region
+    ratio = sum(cell_mask(circular_region)) / sum(circular_region(:));
+    center = [center_x, center_y];
+end
 
 % Initialize storage arrays
 ref_ratios = zeros(grid_rows, grid_cols);
@@ -145,26 +168,30 @@ fprintf('Missing LEDs: %d\n', size(missing_leds, 1));
 fprintf('Average reference ratio: %.3f\n', mean(ref_ratios(:)));
 fprintf('Average test ratio: %.3f\n', mean(test_ratios(:)));
 
-% Function to analyze circular LED region
-function [ratio, center] = analyzeCircularLED(cell_mask)
-    % Find the center of the potential LED in the cell
-    [y, x] = find(cell_mask);
-    if isempty(y)
-        ratio = 0;
-        center = [0, 0];
-        return;
-    end
 
-    % Calculate center of mass
-    center_x = mean(x);
-    center_y = mean(y);
+diff_mask = ref_mask - test_mask;
+montage({diff_mask});
 
-    % Create circular mask for analysis
-    [XX, YY] = meshgrid(1:size(cell_mask,2), 1:size(cell_mask,1));
-    radius = min(size(cell_mask))/4;  % Adjust radius based on LED size
-    circular_region = ((XX-center_x).^2 + (YY-center_y).^2 <= radius^2);
+% Label connected components in the mask
+labeledMask = logical(diff_mask);
 
-    % Calculate ratio only within circular region
-    ratio = sum(cell_mask(circular_region)) / sum(circular_region(:));
-    center = [center_x, center_y];
+% Get properties of each blob (bounding box coordinates)
+blobStats = regionprops(labeledMask, 'BoundingBox');
+
+% Display the mask
+figure(3);
+imshow(diff_mask);
+hold on;
+
+% Draw bounding boxes around each blob
+for i = 1:length(blobStats)
+    % Get the bounding box [x, y, width, height]
+    bbox = blobStats(i).BoundingBox;
+    
+    % Draw the rectangle
+    rectangle('Position', bbox, 'EdgeColor', 'r', 'LineWidth', 2);
+end
+
+title('Detected Blobs with Bounding Boxes');
+hold off;
 end
