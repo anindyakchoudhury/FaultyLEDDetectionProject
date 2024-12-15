@@ -1,8 +1,8 @@
 clc; close all; clearvars;
 
 % Read and prepare images
-ref_img = imread('final.jpg');
-test_img = imread('final_f.jpg');
+ref_img = imread('final2.jpg');
+test_img = imread('final2_f.jpg');
 
 % Convert to HSV and create masks
 ref_hsv = rgb2hsv(ref_img);

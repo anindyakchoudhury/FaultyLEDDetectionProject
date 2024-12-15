@@ -1,10 +1,10 @@
 clc; close all; clearvars;
-%akc
-% Read and prepare images (same as before)
+
+% Read and prepare images
 ref_img = imread('final.jpg');
 test_img = imread('final_f.jpg');
 
-% Convert to HSV and create masks (same as before)
+% Convert to HSV and create masks
 ref_hsv = rgb2hsv(ref_img);
 test_hsv = rgb2hsv(test_img);
 
@@ -26,139 +26,171 @@ se = strel('disk', 2);
 ref_mask = imopen(ref_mask, se);
 test_mask = imopen(test_mask, se);
 
-% Get dimensions and calculate grid parameters
-[ref_height, ref_width] = size(ref_mask);
-[test_height, test_width] = size(test_mask);
+% Create black and white masks (255 for white, 0 for black)
+ref_mask_display = uint8(ref_mask) * 255;
+test_mask_display = uint8(test_mask) * 255;
 
+% Set figure background to black
+set(0, 'defaultfigurecolor', [1 1 1]);
+
+% Get bounding boxes for reference mask
+ref_stats = regionprops(ref_mask, 'BoundingBox', 'Area', 'PixelIdxList');
+ref_boxes = cat(1, ref_stats.BoundingBox);
+ref_areas = cat(1, ref_stats.Area);
+
+% Get bounding boxes for test mask
+test_stats = regionprops(test_mask, 'BoundingBox', 'Area');
+test_boxes = cat(1, test_stats.BoundingBox);
+test_areas = cat(1, test_stats.Area);
+
+% Sort reference boxes by y then x to create 4x16 grid
+[~, ref_order] = sortrows(ref_boxes, [2 1]);  % Sort by y then x
+ref_boxes = ref_boxes(ref_order,:);
+ref_areas = ref_areas(ref_order);
+
+% Reshape into 4x16 grid
 grid_rows = 4;
 grid_cols = 16;
+ref_boxes_grid = reshape(ref_boxes, [grid_cols, grid_rows, 4]);
+ref_boxes_grid = permute(ref_boxes_grid, [2 1 3]);  % Make it rows x cols
 
-ref_cell_height = floor(ref_height/grid_rows);
-ref_cell_width = floor(ref_width/grid_cols);
-test_cell_height = floor(test_height/grid_rows);
-test_cell_width = floor(test_width/grid_cols);
+% Function to analyze LED region
+function ratio = analyzeLEDIntensity(box, intensity_img, mask_img)
+    % Get the region within the bounding box
+    x1 = max(1, round(box(1)));
+    y1 = max(1, round(box(2)));
+    x2 = min(size(intensity_img,2), round(box(1) + box(3)));
+    y2 = min(size(intensity_img,1), round(box(2) + box(4)));
 
-% Function to analyze circular LED region
-function [ratio, center] = analyzeCircularLED(cell_mask)
-    % Find the center of the potential LED in the cell
-    [y, x] = find(cell_mask);
-    if isempty(y)
+    % Extract the region
+    region_mask = logical(mask_img(y1:y2, x1:x2));
+    region_intensity = intensity_img(y1:y2, x1:x2);
+
+    % If no LED detected, return 0
+    if sum(region_mask(:)) == 0
         ratio = 0;
-        center = [0, 0];
         return;
     end
 
-    % Calculate center of mass
-    center_x = mean(x);
-    center_y = mean(y);
-
-    % Create circular mask for analysis
-    [XX, YY] = meshgrid(1:size(cell_mask,2), 1:size(cell_mask,1));
-    radius = min(size(cell_mask))/4;  % Adjust radius based on LED size
-    circular_region = ((XX-center_x).^2 + (YY-center_y).^2 <= radius^2);
-
-    % Calculate ratio only within circular region
-    ratio = sum(cell_mask(circular_region)) / sum(circular_region(:));
-    center = [center_x, center_y];
+    % Calculate average intensity where the mask is true
+    ratio = mean(region_intensity(region_mask));
 end
 
-% Initialize storage arrays
-ref_ratios = zeros(grid_rows, grid_cols);
+% Initialize intensity ratio grids
 test_ratios = zeros(grid_rows, grid_cols);
-missing_leds = [];
 
-% Analyze each grid cell
+% Calculate intensity ratios for test image
 for row = 1:grid_rows
     for col = 1:grid_cols
-        % Calculate cell boundaries for both masks
-        ref_row_start = (row-1)*ref_cell_height + 1;
-        ref_row_end = min(row*ref_cell_height, ref_height);
-        ref_col_start = (col-1)*ref_cell_width + 1;
-        ref_col_end = min(col*ref_cell_width, ref_width);
+        box = ref_boxes_grid(row, col, :);
+        test_ratios(row, col) = analyzeLEDIntensity(box, test_intensity, test_mask);
+    end
+end
 
-        test_row_start = (row-1)*test_cell_height + 1;
-        test_row_end = min(row*test_cell_height, test_height);
-        test_col_start = (col-1)*test_cell_width + 1;
-        test_col_end = min(col*test_cell_width, test_width);
+% Initialize array to store missing LEDs
+missing_leds = [];
 
-        % Extract cell regions
-        ref_cell = ref_mask(ref_row_start:ref_row_end, ref_col_start:ref_col_end);
-        test_cell = test_mask(test_row_start:test_row_end, test_col_start:test_col_end);
+% Function to check if a box exists at similar position
+function found = findMatchingBox(ref_box, test_boxes)
+    if isempty(test_boxes)
+        found = false;
+        return;
+    end
 
-        % Analyze circular LED regions
-        [ref_ratio, ref_center] = analyzeCircularLED(ref_cell);
-        [test_ratio, test_center] = analyzeCircularLED(test_cell);
+    ref_center = [ref_box(1) + ref_box(3)/2, ref_box(2) + ref_box(4)/2];
+    for i = 1:size(test_boxes, 1)
+        test_center = [test_boxes(i,1) + test_boxes(i,3)/2, ...
+                      test_boxes(i,2) + test_boxes(i,4)/2];
+        if norm(ref_center - test_center) < max(ref_box(3), ref_box(4))
+            found = true;
+            return;
+        end
+    end
+    found = false;
+end
 
-        % Store ratios
-        ref_ratios(row, col) = ref_ratio;
-        test_ratios(row, col) = test_ratio;
-
-        % Detect missing LEDs with improved threshold
-        if ref_ratio > 0.15 && (ref_ratio - test_ratio) > 0.15
+% Check each position in reference grid
+for row = 1:grid_rows
+    for col = 1:grid_cols
+        ref_box = ref_boxes_grid(row, col, :);
+        if ~findMatchingBox(ref_box, test_boxes)
             missing_leds(end+1,:) = [row, col];
+            % Set intensity ratio to 0 for missing LEDs
+            test_ratios(row, col) = 0;
         end
     end
 end
 
-% Visualization (same as before but with added circle visualization)
-figure('Name', 'LED Detection Results', 'Position', [100 100 1200 800]);
+% Create figure with 5 subplots
+figure('Name', 'LED Detection Results', 'Position', [100 100 1500 800]);
 
-% Original visualizations
-subplot(2,3,1); imshow(ref_img); title('Reference Image');
-subplot(2,3,2); imshow(test_img); title('Test Image');
-subplot(2,3,3); imshow(ref_mask); title('Reference LED Mask');
-subplot(2,3,4); imshow(test_mask); title('Test LED Mask');
+% Show original masks with black background
+subplot(2,3,1);
+imshow(ref_mask_display, [0 255]);
+set(gca, 'Color', 'k');  % Set axes background to black
+title('Reference LED Mask', 'Color', 'k');
 
-% Grid and missing LEDs visualization
-subplot(2,3,5);
-imshow(test_img);
+subplot(2,3,2);
+imshow(test_mask_display, [0 255]);
+set(gca, 'Color', 'k');  % Set axes background to black
+title('Test LED Mask', 'Color', 'k');
+
+% Show reference mask with all bounding boxes
+subplot(2,3,3);
+imshow(ref_mask_display, [0 255]);
+set(gca, 'Color', 'k');  % Set axes background to black
+hold on;
+for row = 1:grid_rows
+    for col = 1:grid_cols
+        box = ref_boxes_grid(row, col, :);
+        rectangle('Position', box, 'EdgeColor', 'b', 'LineWidth', 1);
+    end
+end
+title('Reference Mask with Bounding Boxes', 'Color', 'k');
+
+% Show test image with reference boxes and missing LEDs highlighted
+subplot(2,3,4);
+imshow(test_mask_display, [0 255]);
+set(gca, 'Color', 'k');  % Set axes background to black
 hold on;
 
-% Draw grid
+% Draw all reference boxes in blue
 for row = 1:grid_rows
-    y = row*test_cell_height;
-    line([1 test_width], [y y], 'Color', 'b', 'LineStyle', ':');
-end
-for col = 1:grid_cols
-    x = col*test_cell_width;
-    line([x x], [1 test_height], 'Color', 'b', 'LineStyle', ':');
+    for col = 1:grid_cols
+        box = ref_boxes_grid(row, col, :);
+        rectangle('Position', box, 'EdgeColor', 'b', 'LineWidth', 1);
+    end
 end
 
-% Mark missing LEDs with circles instead of X marks
+% Highlight missing LEDs in red
 for i = 1:size(missing_leds, 1)
     row = missing_leds(i,1);
     col = missing_leds(i,2);
-    y = (row-0.5)*test_cell_height;
-    x = (col-0.5)*test_cell_width;
-
-    % Draw circle marker
-    radius = min(test_cell_height, test_cell_width)/4;
-    theta = 0:0.1:2*pi;
-    circle_x = x + radius*cos(theta);
-    circle_y = y + radius*sin(theta);
-    plot(circle_x, circle_y, 'y-', 'LineWidth', 2);
+    box = ref_boxes_grid(row, col, :);
+    rectangle('Position', box, 'EdgeColor', 'r', 'LineWidth', 2);
 end
-title('Grid and Missing LEDs (Circular)');
+title('Missing LEDs Highlighted', 'Color', 'k');
 
-% Intensity ratios heatmap
-subplot(2,3,6);
+% Add LED intensity ratio plot
+subplot(2,3,5);
 imagesc(test_ratios);
 colormap('jet');
-colorbar;
+c = colorbar;
+c.Label.String = 'Intensity Ratio';
 title('LED Intensity Ratios');
 xlabel('Column');
 ylabel('Row');
+yticks(1:grid_rows);
+yticklabels(1:grid_rows);
 axis equal tight;
 
-% Print results (same as before)
+% Print results
 fprintf('\nMissing LEDs detected at positions:\n');
 for i = 1:size(missing_leds, 1)
     fprintf('Row: %d, Column: %d\n', missing_leds(i,1), missing_leds(i,2));
 end
 
 fprintf('\nAnalysis Summary:\n');
-fprintf('Reference image size: %dx%d\n', ref_height, ref_width);
-fprintf('Test image size: %dx%d\n', test_height, test_width);
+fprintf('Total LEDs in reference: %d\n', grid_rows * grid_cols);
+fprintf('Total LEDs in test: %d\n', size(test_boxes, 1));
 fprintf('Missing LEDs: %d\n', size(missing_leds, 1));
-fprintf('Average reference ratio: %.3f\n', mean(ref_ratios(:)));
-fprintf('Average test ratio: %.3f\n', mean(test_ratios(:)));
