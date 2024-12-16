@@ -1,60 +1,270 @@
 clc; close all; clearvars;
 
-% Read and prepare images
-ref_img = imread('final.jpg');
-test_img = imread('final_f.jpg');
+try
+    % Set the base directory
+    base_dir = 'C:\SPB_Data\FaultyLEDDetectionProject\image_processing';
 
-% Convert to HSV and create masks
-ref_hsv = rgb2hsv(ref_img);
-test_hsv = rgb2hsv(test_img);
+    % Create output directory if it doesn't exist
+    report_dir = fullfile(base_dir, 'test_reports');
+    if ~exist(report_dir, 'dir')
+        mkdir(report_dir);
+    end
 
-ref_intensity = ref_hsv(:,:,3);
-test_intensity = test_hsv(:,:,3);
-ref_saturation = ref_hsv(:,:,2);
-test_saturation = test_hsv(:,:,2);
+    % Generate unique filename based on timestamp
+    timestamp = datestr(now, 'yyyymmdd_HHMMSS');
+    report_filename = fullfile(report_dir, ['LED_Test_Report_' timestamp]);
 
-% Parameters
-intensity_threshold = 0.7;
-saturation_threshold = 0.2;
+    % Create temporary directory for intermediate files
+    temp_dir = fullfile(base_dir, 'temp');
+    if ~exist(temp_dir, 'dir')
+        mkdir(temp_dir);
+    end
 
-% Create initial masks
-ref_mask = (ref_intensity > intensity_threshold) & (ref_saturation < saturation_threshold);
-test_mask = (test_intensity > intensity_threshold) & (test_saturation < saturation_threshold);
+    % Add title page
+    % Create report generator object
+    import mlreportgen.report.*;
+    import mlreportgen.dom.*;
 
-% Clean up masks using circular structuring element
-se = strel('disk', 2);
-ref_mask = imopen(ref_mask, se);
-test_mask = imopen(test_mask, se);
+    rpt = Report(report_filename, 'pdf');
 
-% Create black and white masks (255 for white, 0 for black)
-ref_mask_display = uint8(ref_mask) * 255;
-test_mask_display = uint8(test_mask) * 255;
+    % Add title page with correct properties
+    tp = TitlePage;
+    tp.Title = 'LED Array Test Report';
+    tp.Author = 'Automated Test System';
+    % Add date and time as subtitle instead
+    tp.Subtitle = ['Test Date: ' datestr(now, 'dd-mmm-yyyy') newline ...
+                  'Test Time: ' datestr(now, 'HH:MM:SS')];
+    add(rpt, tp);
 
-% Set figure background to black
-set(0, 'defaultfigurecolor', [1 1 1]);
+    % Read and prepare images
+    ref_img = imread(fullfile(base_dir, 'final2.jpg'));
+    test_img = imread(fullfile(base_dir, 'final2_f.jpg'));
 
-% Get bounding boxes for reference mask
-ref_stats = regionprops(ref_mask, 'BoundingBox', 'Area', 'PixelIdxList');
-ref_boxes = cat(1, ref_stats.BoundingBox);
-ref_areas = cat(1, ref_stats.Area);
+    % Convert to HSV and create masks
+    ref_hsv = rgb2hsv(ref_img);
+    test_hsv = rgb2hsv(test_img);
 
-% Get bounding boxes for test mask
-test_stats = regionprops(test_mask, 'BoundingBox', 'Area');
-test_boxes = cat(1, test_stats.BoundingBox);
-test_areas = cat(1, test_stats.Area);
+    ref_intensity = ref_hsv(:,:,3);
+    test_intensity = test_hsv(:,:,3);
+    ref_saturation = ref_hsv(:,:,2);
+    test_saturation = test_hsv(:,:,2);
 
-% Sort reference boxes by y then x to create 4x16 grid
-[~, ref_order] = sortrows(ref_boxes, [2 1]);  % Sort by y then x
-ref_boxes = ref_boxes(ref_order,:);
-ref_areas = ref_areas(ref_order);
+    % Parameters
+    intensity_threshold = 0.7;
+    saturation_threshold = 0.2;
 
-% Reshape into 4x16 grid
-grid_rows = 4;
-grid_cols = 16;
-ref_boxes_grid = reshape(ref_boxes, [grid_cols, grid_rows, 4]);
-ref_boxes_grid = permute(ref_boxes_grid, [2 1 3]);  % Make it rows x cols
+    % Create initial masks
+    ref_mask = (ref_intensity > intensity_threshold) & (ref_saturation < saturation_threshold);
+    test_mask = (test_intensity > intensity_threshold) & (test_saturation < saturation_threshold);
 
-% Function to analyze LED region
+    % Clean up masks using circular structuring element
+    se = strel('disk', 2);
+    ref_mask = imopen(ref_mask, se);
+    test_mask = imopen(test_mask, se);
+
+    % Create black and white masks (255 for white, 0 for black)
+    ref_mask_display = uint8(ref_mask) * 255;
+    test_mask_display = uint8(test_mask) * 255;
+
+    % Get bounding boxes for reference mask
+    ref_stats = regionprops(ref_mask, 'BoundingBox', 'Area', 'PixelIdxList');
+    ref_boxes = cat(1, ref_stats.BoundingBox);
+    ref_areas = cat(1, ref_stats.Area);
+
+    % Get bounding boxes for test mask
+    test_stats = regionprops(test_mask, 'BoundingBox', 'Area');
+    test_boxes = cat(1, test_stats.BoundingBox);
+    test_areas = cat(1, test_stats.Area);
+
+    % Sort reference boxes by y then x to create 4x16 grid
+    [~, ref_order] = sortrows(ref_boxes, [2 1]);
+    ref_boxes = ref_boxes(ref_order,:);
+    ref_areas = ref_areas(ref_order);
+
+    % Reshape into 4x16 grid
+    grid_rows = 4;
+    grid_cols = 16;
+    ref_boxes_grid = reshape(ref_boxes, [grid_cols, grid_rows, 4]);
+    ref_boxes_grid = permute(ref_boxes_grid, [2 1 3]);
+
+    % Initialize intensity ratio grids
+    test_ratios = zeros(grid_rows, grid_cols);
+
+    % Calculate intensity ratios for test image
+    for row = 1:grid_rows
+        for col = 1:grid_cols
+            box = ref_boxes_grid(row, col, :);
+            test_ratios(row, col) = analyzeLEDIntensity(box, test_intensity, test_mask);
+        end
+    end
+
+    % Initialize array to store missing LEDs
+    missing_leds = [];
+
+    % Check each position in reference grid
+    for row = 1:grid_rows
+        for col = 1:grid_cols
+            ref_box = ref_boxes_grid(row, col, :);
+            if ~findMatchingBox(ref_box, test_boxes)
+                missing_leds(end+1,:) = [row, col];
+                test_ratios(row, col) = 0;
+            end
+        end
+    end
+
+    % Create visualization figure
+    fig = figure('Name', 'LED Detection Results', 'Position', [100 100 1500 800]);
+
+    % Show original masks with black background
+    figure;
+    imshow(ref_mask_display, [0 255]);
+    set(gca, 'Color', 'k');
+    title('Reference LED Mask', 'Color', 'k');
+
+    subplot(2,3,2);
+    imshow(test_mask_display, [0 255]);
+    set(gca, 'Color', 'k');
+    title('Test LED Mask', 'Color', 'k');
+
+    % Show reference mask with all bounding boxes
+    subplot(2,3,3);
+    imshow(ref_mask_display, [0 255]);
+    set(gca, 'Color', 'k');
+    hold on;
+    for row = 1:grid_rows
+        for col = 1:grid_cols
+            box = ref_boxes_grid(row, col, :);
+            rectangle('Position', box, 'EdgeColor', 'b', 'LineWidth', 1);
+        end
+    end
+    title('Reference Mask with Bounding Boxes', 'Color', 'k');
+
+    % Show test image with reference boxes and missing LEDs highlighted
+    subplot(2,3,4);
+    imshow(test_mask_display, [0 255]);
+    set(gca, 'Color', 'k');
+    hold on;
+
+    % Draw all reference boxes in blue
+    for row = 1:grid_rows
+        for col = 1:grid_cols
+            box = ref_boxes_grid(row, col, :);
+            rectangle('Position', box, 'EdgeColor', 'b', 'LineWidth', 1);
+        end
+    end
+
+    % Highlight missing LEDs in red
+    for i = 1:size(missing_leds, 1)
+        row = missing_leds(i,1);
+        col = missing_leds(i,2);
+        box = ref_boxes_grid(row, col, :);
+        rectangle('Position', box, 'EdgeColor', 'r', 'LineWidth', 2);
+    end
+    title('Missing LEDs Highlighted', 'Color', 'k');
+
+    % Add LED intensity ratio plot
+    subplot(2,3,5);
+    imagesc(test_ratios);
+    colormap('jet');
+    c = colorbar;
+    c.Label.String = 'Intensity Ratio';
+    title('LED Intensity Ratios');
+    xlabel('Column');
+    ylabel('Row');
+    yticks(1:grid_rows);
+    yticklabels(1:grid_rows);
+    axis equal tight;
+
+    % Save figure for report with full path
+    temp_figure_path = fullfile(temp_dir, 'temp_figure.png');
+    print(fig, temp_figure_path, '-dpng', '-r300');
+    close(fig);
+
+    % Add content to report
+    chapter = Chapter('Test Results');
+
+    % Add test parameters
+    sec = Section('Test Parameters');
+    para = Paragraph(['Test conducted on: ' datestr(now, 'dd-mmm-yyyy HH:MM:SS')]);
+    add(sec, para);
+
+    paraParams = Paragraph(sprintf(['Intensity Threshold: %.2f\n' ...
+        'Saturation Threshold: %.2f\n' ...
+        'Grid Size: %dx%d'], ...
+        intensity_threshold, saturation_threshold, grid_rows, grid_cols));
+    add(sec, paraParams);
+    add(chapter, sec);
+
+    % Add results section
+    sec = Section('Test Results');
+
+    % Add test summary
+    para = Paragraph('Test Summary:');
+    add(sec, para);
+
+    % Create summary table
+    summary_data = {...
+        'Description', 'Value'; ...
+        'Total LEDs', num2str(grid_rows * grid_cols); ...
+        'Working LEDs', num2str(size(test_boxes, 1)); ...
+        'Missing LEDs', num2str(size(missing_leds, 1))};
+
+    table = FormalTable(summary_data);
+    table.Style = {Border('solid'), Width('100%')};
+    add(sec, table);
+
+    % Add pass/fail status
+    if isempty(missing_leds)
+        status = Paragraph('TEST STATUS: PASS');
+        status.Style = {Color('green'), Bold(true)};
+    else
+        status = Paragraph('TEST STATUS: FAIL');
+        status.Style = {Color('red'), Bold(true)};
+
+        % Add failed LED positions
+        para = Paragraph('Failed LED Positions:');
+        add(sec, para);
+
+        failed_positions = cell(size(missing_leds, 1) + 1, 2);
+        failed_positions(1,:) = {'Row', 'Column'};
+        for i = 1:size(missing_leds, 1)
+            failed_positions(i+1,:) = {num2str(missing_leds(i,1)), ...
+                num2str(missing_leds(i,2))};
+        end
+
+        table = FormalTable(failed_positions);
+        table.Style = {Border('solid'), Width('50%')};
+        add(sec, table);
+    end
+    add(sec, status);
+
+    % Add visualization
+    img = Image(temp_figure_path);
+    img.Style = {Width('6in')};
+    add(sec, img);
+
+    add(chapter, sec);
+    add(rpt, chapter);
+
+    % Close and generate the report
+    close(rpt);
+
+    % Clean up temporary files
+    delete(temp_figure_path);
+
+    % Remove temporary directory if empty
+    if exist(temp_dir, 'dir')
+        rmdir(temp_dir);
+    end
+
+    fprintf('Report generated successfully: %s.pdf\n', report_filename);
+
+catch ME
+    fprintf('Error generating report: %s\n', ME.message);
+    fprintf('Error details: %s\n', getReport(ME, 'extended'));
+end
+
+% Helper functions
 function ratio = analyzeLEDIntensity(box, intensity_img, mask_img)
     % Get the region within the bounding box
     x1 = max(1, round(box(1)));
@@ -76,21 +286,6 @@ function ratio = analyzeLEDIntensity(box, intensity_img, mask_img)
     ratio = mean(region_intensity(region_mask));
 end
 
-% Initialize intensity ratio grids
-test_ratios = zeros(grid_rows, grid_cols);
-
-% Calculate intensity ratios for test image
-for row = 1:grid_rows
-    for col = 1:grid_cols
-        box = ref_boxes_grid(row, col, :);
-        test_ratios(row, col) = analyzeLEDIntensity(box, test_intensity, test_mask);
-    end
-end
-
-% Initialize array to store missing LEDs
-missing_leds = [];
-
-% Function to check if a box exists at similar position
 function found = findMatchingBox(ref_box, test_boxes)
     if isempty(test_boxes)
         found = false;
@@ -108,89 +303,3 @@ function found = findMatchingBox(ref_box, test_boxes)
     end
     found = false;
 end
-
-% Check each position in reference grid
-for row = 1:grid_rows
-    for col = 1:grid_cols
-        ref_box = ref_boxes_grid(row, col, :);
-        if ~findMatchingBox(ref_box, test_boxes)
-            missing_leds(end+1,:) = [row, col];
-            % Set intensity ratio to 0 for missing LEDs
-            test_ratios(row, col) = 0;
-        end
-    end
-end
-
-% Create figure with 5 subplots
-figure('Name', 'LED Detection Results', 'Position', [100 100 1500 800]);
-
-% Show original masks with black background
-subplot(2,3,1);
-imshow(ref_mask_display, [0 255]);
-set(gca, 'Color', 'k');  % Set axes background to black
-title('Reference LED Mask', 'Color', 'k');
-
-subplot(2,3,2);
-imshow(test_mask_display, [0 255]);
-set(gca, 'Color', 'k');  % Set axes background to black
-title('Test LED Mask', 'Color', 'k');
-
-% Show reference mask with all bounding boxes
-subplot(2,3,3);
-imshow(ref_mask_display, [0 255]);
-set(gca, 'Color', 'k');  % Set axes background to black
-hold on;
-for row = 1:grid_rows
-    for col = 1:grid_cols
-        box = ref_boxes_grid(row, col, :);
-        rectangle('Position', box, 'EdgeColor', 'b', 'LineWidth', 1);
-    end
-end
-title('Reference Mask with Bounding Boxes', 'Color', 'k');
-
-% Show test image with reference boxes and missing LEDs highlighted
-subplot(2,3,4);
-imshow(test_mask_display, [0 255]);
-set(gca, 'Color', 'k');  % Set axes background to black
-hold on;
-
-% Draw all reference boxes in blue
-for row = 1:grid_rows
-    for col = 1:grid_cols
-        box = ref_boxes_grid(row, col, :);
-        rectangle('Position', box, 'EdgeColor', 'b', 'LineWidth', 1);
-    end
-end
-
-% Highlight missing LEDs in red
-for i = 1:size(missing_leds, 1)
-    row = missing_leds(i,1);
-    col = missing_leds(i,2);
-    box = ref_boxes_grid(row, col, :);
-    rectangle('Position', box, 'EdgeColor', 'r', 'LineWidth', 2);
-end
-title('Missing LEDs Highlighted', 'Color', 'k');
-
-% Add LED intensity ratio plot
-subplot(2,3,5);
-imagesc(test_ratios);
-colormap('jet');
-c = colorbar;
-c.Label.String = 'Intensity Ratio';
-title('LED Intensity Ratios');
-xlabel('Column');
-ylabel('Row');
-yticks(1:grid_rows);
-yticklabels(1:grid_rows);
-axis equal tight;
-
-% Print results
-fprintf('\nMissing LEDs detected at positions:\n');
-for i = 1:size(missing_leds, 1)
-    fprintf('Row: %d, Column: %d\n', missing_leds(i,1), missing_leds(i,2));
-end
-
-fprintf('\nAnalysis Summary:\n');
-fprintf('Total LEDs in reference: %d\n', grid_rows * grid_cols);
-fprintf('Total LEDs in test: %d\n', size(test_boxes, 1));
-fprintf('Missing LEDs: %d\n', size(missing_leds, 1));

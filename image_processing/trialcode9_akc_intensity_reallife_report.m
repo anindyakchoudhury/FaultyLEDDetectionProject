@@ -37,7 +37,7 @@ try
 
     % Read and prepare images
     ref_img = imread(fullfile(base_dir, 'final.jpg'));
-    test_img = imread(fullfile(base_dir, 'final.jpg'));
+    test_img = imread(fullfile(base_dir, 'final_f.jpg'));
 
     % Convert to HSV and create masks
     ref_hsv = rgb2hsv(ref_img);
